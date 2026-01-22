@@ -1,57 +1,89 @@
 import streamlit as st
 import pandas as pd
 
-# 網頁基礎設定
-st.set_page_config(page_title="機能織材庫存系統", layout="wide")
+# 設定網頁標籤
+st.set_page_config(page_title="Xpore BMC 庫存管理系統", layout="wide")
 
-# 1. 模擬資料庫 (未來可擴充為真實資料庫)
-if 'data' not in st.session_state:
-    st.session_state.data = pd.DataFrame({
-        "客戶": ["Nike", "Adidas", "A公司", "B貿易"],
-        "款式編號": ["WP-01", "GT-02", "SL-03", "WP-02"],
-        "布料描述": ["3層貼合防水", "彈性透氣網布", "平織防潑水", "2.5層輕量防水"],
-        "顏色": ["海軍藍", "黑色", "白色", "深灰"],
-        "疋數(Rolls)": [10, 5, 12, 8],
-        "總碼數(Yds)": [500, 250, 600, 400],
-        "規格(WP/MVP)": ["10k/10k", "N/A", "5k/5k", "20k/15k"]
-    })
+# 自定義 CSS (保留您 HTML 中的專業配色)
+st.markdown("""
+    <style>
+    .main { background-color: #f1f5f9; }
+    .stMetric { background-color: white; padding: 20px; border-radius: 15px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); border-bottom: 4px solid #10b981; }
+    </style>
+    """, unsafe_allow_html=True)
 
-# 2. 標題與側邊欄搜尋
-st.title("🧵 機能織材與團服庫存管理系統")
+# 1. 初始化資料庫 (欄位對齊您的 HTML/Excel 邏輯)
+if 'inventory' not in st.session_state:
+    st.session_state.inventory = pd.DataFrame(columns=[
+        "客戶", "日期", "品號", "Model Name", "缸號", "LOT", "顏色", "碼數(YDS)", "淨重(NW)", "庫位"
+    ])
 
-st.sidebar.header("🔍 搜尋篩選")
-search_cust = st.sidebar.text_input("搜尋客戶")
-search_fabric = st.sidebar.text_input("搜尋款式/描述")
-search_color = st.sidebar.text_input("搜尋顏色")
+# --- 側邊欄 ---
+with st.sidebar:
+    st.title("🟢 Xpore BMC")
+    st.write("成布庫存數位化系統")
+    st.divider()
+    menu = st.radio("功能選單", ["庫存實時看板", "手動入庫/出庫", "批量 CSV 匯入"])
 
-# 執行過濾
-df = st.session_state.data
-if search_cust: df = df[df['客戶'].str.contains(search_cust)]
-if search_fabric: df = df[df['款式編號'].str.contains(search_fabric) | df['布料描述'].str.contains(search_fabric)]
-if search_color: df = df[df['顏色'].str.contains(search_color)]
+# --- 主畫面邏輯 ---
+if menu == "庫存實時看板":
+    st.header("📊 庫存實時看板")
+    
+    # 搜尋功能
+    search_col1, search_col2 = st.columns([2, 1])
+    query = search_col1.text_input("🔍 搜尋客戶、品號、缸號或顏色...")
+    
+    # 過濾資料
+    df = st.session_state.inventory
+    if query:
+        df = df[df.astype(str).apply(lambda x: x.str.contains(query, case=False)).any(axis=1)]
 
-# 3. 視覺化統計卡片
-c1, c2, c3 = st.columns(3)
-c1.metric("在庫款式數", len(df))
-c2.metric("布疋總數 (Rolls)", int(df["疋數(Rolls)"].sum()))
-c3.metric("總碼數 (Yds)", f"{df['總碼數(Yds)'].sum():,.0f}")
+    # 數據看板 (對齊您的 4 個 Card)
+    s1, s2, s3, s4 = st.columns(4)
+    s1.metric("搜尋結果總疋數", len(df))
+    s2.metric("總碼數 (Yds)", f"{df['碼數(YDS)'].sum():,.1f}")
+    s3.metric("總淨重 (NW/kg)", f"{df['淨重(NW)'].sum():,.1f}")
+    s4.metric("品項總數", len(df['Model Name'].unique()))
 
-st.divider()
+    st.divider()
+    st.dataframe(df, use_container_width=True, height=500)
 
-# 4. 功能分頁
-tab1, tab2, tab3 = st.tabs(["📋 庫存明細", "📦 出入庫作業", "📥 批量匯入"])
+elif menu == "手動入庫/出庫":
+    st.header("📦 庫存異動操作")
+    with st.form("manual_form"):
+        c1, c2, c3 = st.columns(3)
+        cust = c1.text_input("客戶")
+        model = c2.text_input("Model Name")
+        color = c3.text_input("顏色")
+        
+        c4, c5, c6 = st.columns(3)
+        lot = c4.text_input("LOT 號")
+        yds = c5.number_input("碼數 (YDS)", min_value=0.0)
+        nw = c6.number_input("淨重 (NW)", min_value=0.0)
+        
+        op = st.selectbox("操作類型", ["新增入庫", "出庫扣除"])
+        submit = st.form_submit_button("確認執行")
+        
+        if submit:
+            if op == "新增入庫":
+                new_data = {
+                    "客戶": cust, "日期": pd.Timestamp.now().strftime("%Y-%m-%d"),
+                    "Model Name": model, "顏色": color, "LOT": lot, 
+                    "碼數(YDS)": yds, "淨重(NW)": nw
+                }
+                st.session_state.inventory = pd.concat([st.session_state.inventory, pd.DataFrame([new_data])], ignore_index=True)
+                st.success("入庫成功！")
+            else:
+                st.warning("出庫功能將根據 LOT 號比對扣除（開發中）")
 
-with tab1:
-    st.dataframe(df, use_container_width=True)
-
-with tab2:
-    with st.form("inventory_form"):
-        col1, col2, col3 = st.columns(3)
-        action = col1.selectbox("操作類型", ["入庫", "出庫"])
-        item = col2.selectbox("選擇款式", st.session_state.data["款式編號"].unique())
-        qty = col3.number_input("變更疋數", min_value=1)
-        if st.form_submit_button("確認提交"):
-            st.success(f"已完成 {item} 的 {action} 作業 ({qty} 疋)")
-
-with tab3:
-    st.file_uploader("匯入 Packing List (Excel/CSV)", type=["xlsx", "csv"])
+elif menu == "批量 CSV 匯入":
+    st.header("📤 匯入 CSV 庫存表")
+    uploaded_file = st.file_uploader("請選擇 CSV 檔案", type="csv")
+    if uploaded_file:
+        new_df = pd.read_csv(uploaded_file)
+        # 這裡可以根據您 HTML 中的 cols[0], cols[11] 等邏輯進行欄位映射
+        st.write("預覽匯入資料：")
+        st.dataframe(new_df.head())
+        if st.button("確認合併至系統"):
+            st.session_state.inventory = pd.concat([st.session_state.inventory, new_df], ignore_index=True)
+            st.success("資料已匯入！")
