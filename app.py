@@ -1,83 +1,71 @@
 import streamlit as st
 import pandas as pd
+import io
 
 # 網頁基礎設定
 st.set_page_config(page_title="Xpore BMC 庫存管理系統", layout="wide")
 
-# 自定義介面樣式
-st.markdown("""
-    <style>
-    .main { background-color: #f1f5f9; }
-    .stMetric { background-color: white; padding: 20px; border-radius: 15px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); border-bottom: 4px solid #10b981; }
-    </style>
-    """, unsafe_allow_html=True)
-
-# 1. 建立初始庫存資料庫 (從您的 CSV 提取)
+# --- 1. 資料初始化 ---
 if 'inventory' not in st.session_state:
-    raw_data = [
-        ["P&P", "2024/7/17", "XP2202-601", "G-228", "D240327-01", "D240327-01", "L001", "D.NAVY", 27.5, 4.3, "7A-01"],
-        ["ARCTERYX", "2024/7/24", "XP2202-401", "Xpore Pro", "D240327-02", "D240327-02", "L002", "BLACK", 15.2, 3.1, "7A-02"],
-        ["POLARTEC", "2024/8/12", "XP2401-201", "Xpore Air", "D240515-01", "D240515-01", "L003", "GREY", 45.0, 7.8, "8B-05"],
-        ["P&P", "2024/9/05", "XP2202-601", "G-228", "D240601-01", "D240601-01", "L004", "D.NAVY", 30.1, 4.8, "7A-01"],
-        ["SALOMON", "2024/10/20", "XP2305-110", "G-500", "D240812-05", "D240812-05", "L005", "BLUE", 55.4, 9.2, "9C-12"]
+    # 這裡放您的初始資料 (P&P, ARCTERYX 等)
+    initial_data = [
+        ["P&P", "2024/07/17", "XP2202-601", "G-228", "D240327-01", "L001", "D.NAVY", 27.5, 4.3, "7A-01"],
+        ["ARCTERYX", "2024/07/24", "XP2202-401", "Xpore Pro", "D240327-02", "L002", "BLACK", 15.2, 3.1, "7A-02"]
     ]
-    
-    st.session_state.inventory = pd.DataFrame(raw_data, columns=[
-        "客戶", "日期", "品號", "Model Name", "缸號(表)", "缸號(底)", "LOT", "顏色", "碼數(YDS)", "淨重(NW)", "庫位"
+    st.session_state.inventory = pd.DataFrame(initial_data, columns=[
+        "客戶", "日期", "品號", "Model Name", "缸號", "LOT", "顏色", "碼數(YDS)", "淨重(NW)", "庫位"
     ])
 
-# --- 側邊欄 ---
+# --- 2. 側邊欄 ---
 with st.sidebar:
     st.title("🟢 Xpore BMC")
-    st.write("成布庫存數位化系統")
+    menu = st.radio("功能選單", ["📊 庫存看板與編輯", "📤 批量匯入 CSV", "💾 備份資料庫"])
+
+# --- 3. 庫存看板與手動編輯 ---
+if menu == "📊 庫存看板與編輯":
+    st.header("庫存實時看板 (可直接雙擊單格進行修改)")
+    
+    # 顯示編輯器
+    edited_df = st.data_editor(
+        st.session_state.inventory, 
+        num_rows="dynamic", 
+        use_container_width=True,
+        key="main_editor"
+    )
+    
+    # 更新暫存
+    if st.button("確認保存修改 (暫存至網頁)"):
+        st.session_state.inventory = edited_df
+        st.success("暫存成功！注意：若伺服器重啟，請確保您已執行『備份資料庫』。")
+
+    # 快速統計
     st.divider()
-    menu = st.radio("功能選單", ["📊 庫存實時看板", "📦 手動入庫/出庫", "📤 批量匯入 CSV"])
+    c1, c2 = st.columns(2)
+    c1.metric("總碼數 (YDS)", f"{pd.to_numeric(edited_df['碼數(YDS)'], errors='coerce').sum():,.1f}")
+    c2.metric("總淨重 (NW)", f"{pd.to_numeric(edited_df['淨重(NW)'], errors='coerce').sum():,.1f}")
 
-# --- 功能區：庫存實時看板 ---
-if menu == "📊 庫存實時看板":
-    st.header("庫存實時看板")
+# --- 4. 備份功能 (取代 Google Drive) ---
+elif menu == "💾 備份資料庫":
+    st.header("資料持久化備份")
+    st.info("由於公司系統攔截雲端硬碟，請定期將編輯後的資料下載備份。")
     
-    df = st.session_state.inventory
+    # 將 DataFrame 轉為 CSV 字串
+    csv = st.session_state.inventory.to_csv(index=False).encode('utf-8-sig')
     
-    # 搜尋與過濾
-    search = st.text_input("🔍 搜尋客戶、品號、缸號或顏色...", placeholder="輸入關鍵字...")
-    if search:
-        df = df[df.astype(str).apply(lambda x: x.str.contains(search, case=False)).any(axis=1)]
+    st.download_button(
+        label="📥 下載目前最新庫存表 (.csv)",
+        data=csv,
+        file_name=f"BMC_Inventory_Backup_{pd.Timestamp.now().strftime('%Y%m%d')}.csv",
+        mime="text/csv",
+    )
+    st.write("💡 下次開啟網頁時，您可以透過『批量匯入』功能將此檔案傳回系統。")
 
-    # 頂部統計指標
-    col1, col2, col3, col4 = st.columns(4)
-    col1.metric("搜尋結果總疋數", len(df))
-    col2.metric("總碼數 (YDS)", f"{df['碼數(YDS)'].sum():,.1f}")
-    col3.metric("總淨重 (NW)", f"{df['淨重(NW)'].sum():,.1f}")
-    col4.metric("品項總數", len(df['Model Name'].unique()))
-
-    st.divider()
-    
-    # 顯示主表格
-    st.dataframe(df, use_container_width=True, height=600)
-
-# --- 功能區：手動作業 ---
-elif menu == "📦 手動入庫/出庫":
-    st.header("手動更新庫存")
-    with st.form("manual_entry"):
-        c1, c2, c3 = st.columns(3)
-        new_cust = c1.text_input("客戶名稱")
-        new_model = c2.text_input("Model Name")
-        new_color = c3.text_input("顏色")
-        
-        c4, c5, c6 = st.columns(3)
-        new_yds = c4.number_input("碼數 (YDS)", min_value=0.0)
-        new_nw = c5.number_input("淨重 (NW)", min_value=0.0)
-        new_loc = c6.text_input("庫位")
-        
-        if st.form_submit_button("確認入庫"):
-            new_row = pd.DataFrame([[new_cust, pd.Timestamp.now().strftime("%Y/%m/%d"), "", new_model, "", "", "", new_color, new_yds, new_nw, new_loc]], columns=df.columns)
-            st.session_state.inventory = pd.concat([st.session_state.inventory, new_row], ignore_index=True)
-            st.success("入庫資料已更新！")
-
-# --- 功能區：批量匯入 ---
+# --- 5. 批量匯入 ---
 elif menu == "📤 批量匯入 CSV":
-    st.header("CSV 批量匯入作業")
-    uploaded_file = st.file_uploader("請上傳您的庫存 CSV 檔案", type="csv")
+    st.header("匯入舊有/備份資料")
+    uploaded_file = st.file_uploader("選擇之前的備份檔或新的庫存表", type="csv")
     if uploaded_file:
-        st.success("檔案已讀取！(此功能可根據您的 CSV 欄位進一步客製化)")
+        imported_df = pd.read_csv(uploaded_file)
+        if st.button("覆蓋並更新系統資料"):
+            st.session_state.inventory = imported_df
+            st.success("資料庫已更新！")
