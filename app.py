@@ -1,13 +1,20 @@
 import streamlit as st
 import pandas as pd
-import io
+from datetime import datetime
 
-# 網頁基礎設定
-st.set_page_config(page_title="Xpore BMC 庫存管理系統", layout="wide")
+# 網頁設定：讓表格在手機上更易閱讀
+st.set_page_config(page_title="Xpore BMC 行動庫存", layout="wide")
 
-# --- 1. 資料初始化 ---
+# 強制 CSS 優化手機表格顯示
+st.markdown("""
+    <style>
+    [data-testid="stDataEditor"] { width: 100% !important; }
+    .stButton button { width: 100%; border-radius: 10px; height: 3em; }
+    </style>
+    """, unsafe_allow_html=True)
+
+# 1. 初始化資料 (從您提供的 BMC 表格提取核心)
 if 'inventory' not in st.session_state:
-    # 這裡放您的初始資料 (P&P, ARCTERYX 等)
     initial_data = [
         ["P&P", "2024/07/17", "XP2202-601", "G-228", "D240327-01", "L001", "D.NAVY", 27.5, 4.3, "7A-01"],
         ["ARCTERYX", "2024/07/24", "XP2202-401", "Xpore Pro", "D240327-02", "L002", "BLACK", 15.2, 3.1, "7A-02"]
@@ -16,56 +23,59 @@ if 'inventory' not in st.session_state:
         "客戶", "日期", "品號", "Model Name", "缸號", "LOT", "顏色", "碼數(YDS)", "淨重(NW)", "庫位"
     ])
 
-# --- 2. 側邊欄 ---
+# --- 側邊欄：手機選單 ---
 with st.sidebar:
-    st.title("🟢 Xpore BMC")
-    menu = st.radio("功能選單", ["📊 庫存看板與編輯", "📤 批量匯入 CSV", "💾 備份資料庫"])
+    st.title("🟢 Xpore 行動庫存")
+    menu = st.radio("功能切換", ["🔍 查詢與修改", "📤 手機匯入 CSV", "💾 存檔至手機/電腦"])
 
-# --- 3. 庫存看板與手動編輯 ---
-if menu == "📊 庫存看板與編輯":
-    st.header("庫存實時看板 (可直接雙擊單格進行修改)")
+# --- 功能 1：查詢與修改 ---
+if menu == "🔍 查詢與修改":
+    st.header("📊 庫存看板")
     
-    # 顯示編輯器
-    edited_df = st.data_editor(
-        st.session_state.inventory, 
+    # 搜尋框：手機輸入優化
+    search = st.text_input("快速搜尋 (客戶/品號/顏色)", placeholder="輸入關鍵字...")
+    
+    df = st.session_state.inventory
+    if search:
+        df = df[df.astype(str).apply(lambda x: x.str.contains(search, case=False)).any(axis=1)]
+
+    # 數據統計
+    c1, c2 = st.columns(2)
+    c1.metric("總碼數", f"{pd.to_numeric(df['碼數(YDS)'], errors='coerce').sum():,.1f}")
+    c2.metric("總淨重", f"{pd.to_numeric(df['淨重(NW)'], errors='coerce').sum():,.1f}")
+
+    st.subheader("點擊下方表格內容可直接修改")
+    # 手動修改欄位內容 (動態表格)
+    updated_df = st.data_editor(
+        df, 
         num_rows="dynamic", 
         use_container_width=True,
-        key="main_editor"
+        key="mobile_editor"
     )
     
-    # 更新暫存
-    if st.button("確認保存修改 (暫存至網頁)"):
-        st.session_state.inventory = edited_df
-        st.success("暫存成功！注意：若伺服器重啟，請確保您已執行『備份資料庫』。")
+    if st.button("✅ 確認保存所有修改"):
+        st.session_state.inventory = updated_df
+        st.success("修改已暫存！")
 
-    # 快速統計
-    st.divider()
-    c1, c2 = st.columns(2)
-    c1.metric("總碼數 (YDS)", f"{pd.to_numeric(edited_df['碼數(YDS)'], errors='coerce').sum():,.1f}")
-    c2.metric("總淨重 (NW)", f"{pd.to_numeric(edited_df['淨重(NW)'], errors='coerce').sum():,.1f}")
+# --- 功能 2：手機匯入 CSV ---
+elif menu == "📤 手機匯入 CSV":
+    st.header("上傳 CSV 檔案")
+    st.write("您可以從手機的『檔案』App 選擇 CSV 匯入。")
+    up_file = st.file_uploader("選擇檔案", type="csv")
+    if up_file:
+        new_data = pd.read_csv(up_file)
+        if st.button("覆蓋並更新庫存"):
+            st.session_state.inventory = new_data
+            st.success("匯入成功！")
 
-# --- 4. 備份功能 (取代 Google Drive) ---
-elif menu == "💾 備份資料庫":
-    st.header("資料持久化備份")
-    st.info("由於公司系統攔截雲端硬碟，請定期將編輯後的資料下載備份。")
-    
-    # 將 DataFrame 轉為 CSV 字串
-    csv = st.session_state.inventory.to_csv(index=False).encode('utf-8-sig')
-    
+# --- 功能 3：持久化存檔 ---
+elif menu == "💾 存檔至手機/電腦":
+    st.header("下載最新庫存表")
+    st.info("因系統重啟資料會重置，請在修改後下載此檔保存。")
+    csv_data = st.session_state.inventory.to_csv(index=False).encode('utf-8-sig')
     st.download_button(
-        label="📥 下載目前最新庫存表 (.csv)",
-        data=csv,
-        file_name=f"BMC_Inventory_Backup_{pd.Timestamp.now().strftime('%Y%m%d')}.csv",
-        mime="text/csv",
+        label="📥 下載 CSV 到手機存檔",
+        data=csv_data,
+        file_name=f"BMC_Stock_{datetime.now().strftime('%m%d_%H%M')}.csv",
+        mime="text/csv"
     )
-    st.write("💡 下次開啟網頁時，您可以透過『批量匯入』功能將此檔案傳回系統。")
-
-# --- 5. 批量匯入 ---
-elif menu == "📤 批量匯入 CSV":
-    st.header("匯入舊有/備份資料")
-    uploaded_file = st.file_uploader("選擇之前的備份檔或新的庫存表", type="csv")
-    if uploaded_file:
-        imported_df = pd.read_csv(uploaded_file)
-        if st.button("覆蓋並更新系統資料"):
-            st.session_state.inventory = imported_df
-            st.success("資料庫已更新！")
